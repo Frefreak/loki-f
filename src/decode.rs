@@ -19,6 +19,10 @@ pub struct Decode {
     /// disable pretty output
     #[clap(short, long)]
     pub compact: bool,
+
+    /// just parse, do not output
+    #[clap(long)]
+    pub noout: bool,
 }
 
 fn decode_chunk<R: Read + Seek>(reader: &mut R) -> anyhow::Result<Chunk> {

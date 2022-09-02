@@ -1,4 +1,4 @@
-use std::{io::{stdout, Write}, fs::File};
+use std::{io::{stdout, Write, BufWriter}, fs::File};
 
 use clap::{Parser, AppSettings};
 use decode::decode_file;
@@ -29,11 +29,14 @@ fn main() -> anyhow::Result<()> {
         SubCommand::Decode(d) => {
             debug!("{d:?}");
             let chunk = decode_file(d.input)?;
+            if d.noout {
+                return Ok(());
+            }
             info!("{:?}", chunk.data.meta);
             let writer: Box<dyn Write> = if d.output == "-" {
-                Box::new(stdout().lock())
+                Box::new(BufWriter::new(stdout().lock()))
             } else {
-                Box::new(File::create(d.output)?)
+                Box::new(BufWriter::new(File::create(d.output)?))
             };
             if d.compact {
                 serde_json::to_writer(writer, &chunk)?;

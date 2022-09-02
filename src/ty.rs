@@ -224,6 +224,12 @@ fn decompress(vec: &[u8], enc_type: &EncType, num_entries: usize) -> BinResult<U
             decoder.read_to_end(&mut s)?;
             s
         }
+        EncType::EncZstd => {
+            let mut decoder = zstd::Decoder::new(vec)?;
+            let mut s = Vec::new();
+            decoder.read_to_end(&mut s)?;
+            s
+        }
         e => {
             return Err(binread::Error::Custom {
                 pos: 0,
