@@ -35,8 +35,7 @@ impl BinRead for UnorderedBlockEntry {
     ) -> binread::BinResult<Self> {
         let ts = reader.read_varint::<i64>()?;
         let sz = reader.read_varint::<u64>()?;
-        let mut vec = Vec::with_capacity(sz as usize);
-        vec.resize(sz as usize, 0);
+        let mut vec = vec![0; sz as usize];
         reader.read_exact(vec.as_mut())?;
         Ok(UnorderedBlockEntry {
             time: NaiveDateTime::from_timestamp(ts / (1e9 as i64), 0),
@@ -117,7 +116,7 @@ impl BinRead for Meta {
     ) -> binread::BinResult<Self> {
         let num_blocks = reader.read_varint()?;
         let block_metas = (0..num_blocks)
-            .map(|_| Ok(reader.read_le()?))
+            .map(|_| reader.read_le())
             .collect::<BinResult<_>>()?;
         let crc32 = reader.read_le()?;
         //TODO: CRC check
@@ -174,7 +173,7 @@ impl BinRead for ChunkData {
         debug!("meta parsed: {:?}", meta);
 
         reader.seek(std::io::SeekFrom::Start(cur_pos))?;
-        let mut new_opt = options.clone();
+        let mut new_opt = *options;
         new_opt.endian = Endian::Big;
         debug!("finding magic 0x012ee56a");
         magic(reader, 0x012EE56A_u32, &new_opt)?;
@@ -187,8 +186,8 @@ impl BinRead for ChunkData {
         for i in 0..meta.num_blocks {
             let block_meta = &meta.block_metas[i];
             reader.seek(std::io::SeekFrom::Start(block_meta.offset + cur_pos))?;
-            let mut vec = Vec::with_capacity(block_meta.compressed_size);
-            vec.resize(block_meta.compressed_size, 0);
+            let mut vec = vec![0; block_meta.compressed_size];
+
             debug!("uncompressed size: {}", block_meta.uncompressed_size);
             reader.read_exact(&mut vec)?;
             let bs = decompress(&vec, &enc_type, block_meta.num_entries)?;
@@ -268,13 +267,13 @@ impl BinRead for ChunkHead {
         let mut s = Vec::new();
         decoder.read_to_end(&mut s)?;
         match serde_json::from_slice(&s) {
-            Ok(h) => return Ok(h),
+            Ok(h) => Ok(h),
             Err(err) => {
                 println!("{:?}", err);
-                return Err(binread::Error::Custom {
+                Err(binread::Error::Custom {
                     pos: 0,
                     err: Box::new(anyhow::format_err!("header json deserialize: {err:?}")),
-                });
+                })
             }
         }
     }
@@ -289,8 +288,7 @@ impl BinRead for Chunk {
         _args: Self::Args,
     ) -> binread::BinResult<Self> {
         let head_sz = reader.read_be::<u32>()? as usize;
-        let mut vec = Vec::with_capacity(head_sz - 4);
-        vec.resize(head_sz - 4, 0);
+        let mut vec = vec![0; head_sz - 4];
         reader.read_exact(&mut vec)?;
         let mut cursor = Cursor::new(vec);
         let header = cursor.read_le()?;

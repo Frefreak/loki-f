@@ -28,10 +28,10 @@ fn decode_chunk<R: Read + Seek>(reader: &mut R) -> anyhow::Result<Chunk> {
             match error {
                 binread::Error::Custom { pos: _, err: _ } => {
                     let err_msg = error.custom_err::<anyhow::Error>().unwrap();
-                    return Err(anyhow::format_err!("{err_msg:?}"));
+                    Err(anyhow::format_err!("{err_msg:?}"))
                 }
                 err => {
-                    return Err(anyhow::format_err!("{err}"));
+                    Err(anyhow::format_err!("{err}"))
                 }
             }
         }
