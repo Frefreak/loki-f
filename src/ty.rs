@@ -205,12 +205,13 @@ impl BinRead for ChunkData {
 
 // decompress chunk data (assumes unordered block)
 fn decompress(vec: &[u8], enc_type: &EncType, num_entries: usize) -> BinResult<UnorderedBlock> {
-    std::fs::write("debug.bin", vec)?;
+    // std::fs::write("debug.bin", vec)?;
     debug!(
         "decompress called, vec len: {}, enc type: {:?}",
         vec.len(),
         enc_type
     );
+    // let vec = BufReader::new(vec);
     let decoded = match enc_type {
         EncType::EncGZIP => {
             let mut d = GzDecoder::new(vec);
