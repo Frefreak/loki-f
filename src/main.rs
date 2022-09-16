@@ -6,6 +6,7 @@ use tracing::{debug, info};
 
 pub mod ty;
 pub mod decode;
+pub mod push;
 
 #[derive(Parser, Debug)]
 #[clap(version = "1.0")]
@@ -20,6 +21,9 @@ struct Opts {
 enum SubCommand {
     #[clap(version="1.0", aliases=&["d", "de", "dec"])]
     Decode(decode::Decode),
+
+    #[clap(version="1.0", aliases=&["p", "push"])]
+    Push(push::Push),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -43,6 +47,10 @@ fn main() -> anyhow::Result<()> {
             } else {
                 serde_json::to_writer_pretty(writer, &chunk)?;
             }
+            Ok(())
+        },
+        SubCommand::Push(p) => {
+            push::push(p)?;
             Ok(())
         },
     }
