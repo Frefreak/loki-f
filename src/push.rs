@@ -1,5 +1,6 @@
 use std::{collections::HashMap, str::FromStr, time::{SystemTime, UNIX_EPOCH}};
 
+use base64::encode;
 use clap::Parser;
 use serde::Serialize;
 
@@ -9,6 +10,14 @@ pub struct Push {
     /// labels to use, "prog=lf" if not given
     #[clap(short, long, multiple=true)]
     pub labels: Vec<KeyValue>,
+
+    /// headers to send, used for basic authentication, etc
+    #[clap(long, multiple=true)]
+    pub headers: Vec<KeyValue>,
+
+    /// send basic auth authentication
+    #[clap(short, long)]
+    pub basic_auth: Option<KeyValue>,
 
     /// content to push
     #[clap(short, long)]
@@ -67,6 +76,14 @@ pub fn push(p: Push) -> anyhow::Result<()> {
     let client = reqwest::blocking::Client::new();
     let mut req = client.post(format!("{}/loki/api/v1/push", p.endpoint))
         .header("Content-Type", "application/json");
+    for kv in p.headers {
+        req = req.header(kv.key, kv.value);
+    }
+    if let Some(auth) = p.basic_auth {
+        let s = format!("{}:{}", auth.key, auth.value);
+        let encoded = encode(s);
+        req = req.header("Authorization", format!("Basic {}", encoded));
+    }
     if let Some(t) = p.tenant {
         req = req.header("X-Scope-OrgID", t);
     }
