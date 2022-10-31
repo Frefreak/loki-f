@@ -7,6 +7,7 @@ use tracing::{debug, info};
 pub mod ty;
 pub mod decode;
 pub mod push;
+pub mod bolt;
 
 #[derive(Parser, Debug)]
 #[clap(version = "1.0")]
@@ -19,11 +20,17 @@ struct Opts {
 
 #[derive(Parser, Debug)]
 enum SubCommand {
-    #[clap(version="1.0", aliases=&["d", "de", "dec"])]
+    /// decode chunk
+    #[clap(aliases=&["d", "de", "dec"])]
     Decode(decode::Decode),
 
-    #[clap(version="1.0", aliases=&["p", "push"])]
+    /// push to loki
+    #[clap(aliases=&["p", "push"])]
     Push(push::Push),
+
+    /// boltdb inspection
+    #[clap(aliases=&["b", "boltdb"])]
+    Bolt(bolt::Bolt),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -51,6 +58,10 @@ fn main() -> anyhow::Result<()> {
         },
         SubCommand::Push(p) => {
             push::push(p)?;
+            Ok(())
+        },
+        SubCommand::Bolt(b) => {
+            bolt::inspect(b)?;
             Ok(())
         },
     }

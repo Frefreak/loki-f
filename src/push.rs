@@ -7,7 +7,7 @@ use serde::Serialize;
 #[derive(Parser, Debug)]
 pub struct Push {
     /// labels to use, "prog=lf" if not given
-    #[clap(short, long)]
+    #[clap(short, long, multiple=true)]
     pub labels: Vec<KeyValue>,
 
     /// content to push
