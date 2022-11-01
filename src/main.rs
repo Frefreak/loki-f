@@ -4,10 +4,12 @@ use clap::{Parser, AppSettings};
 use decode::decode_file;
 use tracing::{debug, info};
 
-pub mod ty;
-pub mod decode;
-pub mod push;
-pub mod bolt;
+mod ty;
+mod common;
+mod decode;
+mod push;
+mod query;
+mod bolt;
 
 #[derive(Parser, Debug)]
 #[clap(version = "1.0")]
@@ -27,6 +29,10 @@ enum SubCommand {
     /// push to loki
     #[clap(aliases=&["p", "push"])]
     Push(push::Push),
+
+    /// query loki
+    #[clap(aliases=&["q", "query"])]
+    Query(query::Query),
 
     /// boltdb inspection
     #[clap(aliases=&["b", "boltdb"])]
@@ -58,6 +64,10 @@ fn main() -> anyhow::Result<()> {
         },
         SubCommand::Push(p) => {
             push::push(p)?;
+            Ok(())
+        },
+        SubCommand::Query(q) => {
+            query::query(q)?;
             Ok(())
         },
         SubCommand::Bolt(b) => {

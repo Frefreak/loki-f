@@ -1,8 +1,9 @@
-use std::{collections::HashMap, str::FromStr, time::{SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, time::{SystemTime, UNIX_EPOCH}};
 
-use base64::encode;
 use clap::Parser;
 use serde::Serialize;
+
+use crate::common::{KeyValue, refine_loki_request};
 
 /// push a single message (for now, meant for debugging only)
 #[derive(Parser, Debug)]
@@ -32,33 +33,6 @@ pub struct Push {
     pub endpoint: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct KeyValue {
-    pub key: String,
-    pub value: String,
-}
-
-impl FromStr for KeyValue {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let sp = s.splitn(2, '=').collect::<Vec<_>>();
-        if sp.len() != 2 {
-            return Err(anyhow::format_err!("invalid format, expect something like A=B"));
-        }
-        Ok(KeyValue {
-            key: sp[0].to_string(),
-            value: sp[1].to_string(),
-        })
-    }
-}
-
-impl From<&KeyValue> for (String, String) {
-    fn from(kv: &KeyValue) -> Self {
-        (kv.key.clone(), kv.value.clone())
-    }
-}
-
 #[derive(Debug, Serialize)]
 struct PushRequest {
     streams: Vec<Stream>
@@ -74,19 +48,9 @@ pub fn push(p: Push) -> anyhow::Result<()> {
     let req = mk_req(&p);
     let payload = serde_json::to_string(&req)?;
     let client = reqwest::blocking::Client::new();
-    let mut req = client.post(format!("{}/loki/api/v1/push", p.endpoint))
+    let req = client.post(format!("{}/loki/api/v1/push", p.endpoint))
         .header("Content-Type", "application/json");
-    for kv in p.headers {
-        req = req.header(kv.key, kv.value);
-    }
-    if let Some(auth) = p.basic_auth {
-        let s = format!("{}:{}", auth.key, auth.value);
-        let encoded = encode(s);
-        req = req.header("Authorization", format!("Basic {}", encoded));
-    }
-    if let Some(t) = p.tenant {
-        req = req.header("X-Scope-OrgID", t);
-    }
+    let req = refine_loki_request(req, p.headers, p.basic_auth, p.tenant);
     let resp = req.body(payload).send()?;
     println!("{}\n{}", resp.status(), resp.text()?);
     Ok(())
