@@ -8,29 +8,29 @@ use crate::common::{KeyValue, refine_loki_request};
 /// push a single message (for now, meant for debugging only)
 #[derive(Parser, Debug)]
 pub struct Push {
-    /// labels to use, "prog=lf" if not given
-    #[clap(short, long, multiple=true)]
-    pub labels: Vec<KeyValue>,
+    /// Labels to use, "prog=lf" if not given
+    #[clap(short, long, num_args=0..)]
+    labels: Vec<KeyValue>,
 
-    /// headers to send, used for basic authentication, etc
-    #[clap(long, multiple=true)]
-    pub headers: Vec<KeyValue>,
+    /// Headers to send, used for basic authentication, etc
+    #[clap(long, num_args=0..)]
+    headers: Vec<KeyValue>,
 
-    /// send basic auth authentication
+    /// Send basic auth authentication
+    #[clap(short, long, env = "LF_BASIC_AUTH")]
+    basic_auth: Option<KeyValue>,
+
+    /// Content to push
     #[clap(short, long)]
-    pub basic_auth: Option<KeyValue>,
+    content: String,
 
-    /// content to push
-    #[clap(short, long)]
-    pub content: String,
+    /// Tenant id
+    #[clap(short, long, env = "LF_TENANT")]
+    tenant: Option<String>,
 
-    /// tenant id
-    #[clap(short, long)]
-    pub tenant: Option<String>,
-
-    /// loki endpoint
-    #[clap(short, long, default_value="http://127.0.0.1:3100")]
-    pub endpoint: String,
+    /// Loki endpoint
+    #[clap(short, long, default_value="http://127.0.0.1:3100", env = "LF_ENDPOINT")]
+    endpoint: String,
 }
 
 #[derive(Debug, Serialize)]

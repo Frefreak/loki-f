@@ -1,6 +1,6 @@
 use std::{io::{stdout, Write, BufWriter}, fs::File};
 
-use clap::{Parser, AppSettings};
+use clap::Parser;
 use decode::decode_file;
 use tracing::{debug, info};
 
@@ -14,7 +14,6 @@ mod bolt;
 #[derive(Parser, Debug)]
 #[clap(version = "1.0")]
 /// Loki How
-#[clap(setting = AppSettings::ColoredHelp)]
 struct Opts {
     #[clap(subcommand)]
     command: SubCommand,
@@ -27,14 +26,18 @@ enum SubCommand {
     Decode(decode::Decode),
 
     /// push to loki
-    #[clap(aliases=&["p", "push"])]
+    #[clap(aliases=&["p"])]
     Push(push::Push),
 
     /// query loki
-    #[clap(aliases=&["q", "query"])]
+    #[clap(aliases=&["q"])]
     Query(query::Query),
 
+    /// query loki for miscellaneous stats
+    #[clap(aliases=&["qm"])]
+    QueryMisc(query::QueryMisc),
     /// boltdb inspection
+
     #[clap(aliases=&["b", "boltdb"])]
     Bolt(bolt::Bolt),
 }
@@ -68,6 +71,10 @@ fn main() -> anyhow::Result<()> {
         },
         SubCommand::Query(q) => {
             query::query(q)?;
+            Ok(())
+        },
+        SubCommand::QueryMisc(q) => {
+            query::query_misc(q)?;
             Ok(())
         },
         SubCommand::Bolt(b) => {

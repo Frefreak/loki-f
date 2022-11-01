@@ -1,26 +1,23 @@
 use parse_duration::parse as parse_duration;
 use serde::Serialize;
-use std::{
-    str::FromStr,
-    time::Duration,
-};
+use std::{str::FromStr, time::Duration};
 use tracing::debug;
 
 use chrono::{Local, NaiveDateTime};
 use clap::Parser;
 
-use crate::common::{refine_loki_request, KeyValue, green, gray, blue};
+use crate::common::{blue, gray, green, refine_loki_request, KeyValue};
 
 #[derive(Parser, Debug)]
 /// loki query range api
 pub struct Query {
-    /// headers to send, used for basic authentication, etc
-    #[clap(long, multiple = true)]
-    pub headers: Vec<KeyValue>,
+    /// Headers to send, used for basic authentication, etc
+    #[clap(long, num_args = 0..)]
+    headers: Vec<KeyValue>,
 
-    /// send basic auth authentication
-    #[clap(short, long)]
-    pub basic_auth: Option<KeyValue>,
+    /// Send basic auth authentication
+    #[clap(short, long, env = "LF_BASIC_AUTH")]
+    basic_auth: Option<KeyValue>,
 
     /// The LogQL query to perform
     #[clap(short, long)]
@@ -31,7 +28,7 @@ pub struct Query {
     #[clap(short, long, default_value = "100")]
     limit: u32,
 
-    /// print raw response json
+    /// Print raw response json
     #[clap(short, long)]
     raw: bool,
 
@@ -47,28 +44,33 @@ pub struct Query {
     #[clap(long, default_value = "backward")]
     direction: QueryDirection,
 
-    /// shorthand to specify recent duration as start/end
+    /// Shorthand to specify recent duration as start/end.
     /// This has the highest priority since this is the most
     /// common use case.
-    #[clap(long, parse(try_from_str=parse_duration))]
+    #[clap(long, value_parser=parse_duration)]
     since: Option<Duration>,
 
-    /// shorthand to specify duration (working with start or end)
-    /// the interval is [start, start + duration] or [end - duration, end]
+    /// Shorthand to specify duration (working with start or end).
+    /// The interval is [start, start + duration] or [end - duration, end]
     /// depending on whether start or end you have been specified.
-    #[clap(short, long, parse(try_from_str=parse_duration))]
+    #[clap(short, long, value_parser=parse_duration)]
     duration: Option<Duration>,
 
-    /// tenant id
-    #[clap(short, long)]
-    pub tenant: Option<String>,
+    /// Tenant id
+    #[clap(short, long, env = "LF_TENANT")]
+    tenant: Option<String>,
 
-    /// loki endpoint
-    #[clap(short, long, default_value = "http://127.0.0.1:3100")]
-    pub endpoint: String,
+    /// Loki endpoint
+    #[clap(
+        short,
+        long,
+        default_value = "http://127.0.0.1:3100",
+        env = "LF_ENDPOINT"
+    )]
+    endpoint: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 enum QueryDirection {
     #[serde(rename = "forward")]
     Forward,
@@ -123,8 +125,14 @@ pub fn query(q: Query) -> anyhow::Result<()> {
         // labels
         let stream = r.get("stream").unwrap();
         let mut stream_label = String::default();
+        let mut first = true;
         for (k, v) in stream.as_object().unwrap() {
-            stream_label.push_str(&format!("{} = {}", k, v.as_str().unwrap()));
+            if first {
+                stream_label.push_str(&format!("{} = {}", k, v.as_str().unwrap()));
+                first = false;
+            } else {
+                stream_label.push_str(&format!(", {} = {}", k, v.as_str().unwrap()));
+            }
         }
         println!("{}", green(&stream_label));
 
@@ -132,20 +140,25 @@ pub fn query(q: Query) -> anyhow::Result<()> {
         for value in r.get("values").unwrap().as_array().unwrap() {
             let ts_nano = value[0].as_str().unwrap().parse::<u64>().unwrap();
             let date = NaiveDateTime::from_timestamp(
-                (ts_nano / 1000_000_000) as i64,
-                (ts_nano % 1000_000_000) as u32,
+                (ts_nano / 1_000_000_000) as i64,
+                (ts_nano % 1_000_000_000) as u32,
             );
             let text = value[1].as_str().unwrap();
-            let date_str = date.format("%Y-%m-%d %H:%M:%S").to_string();
+            let date_str = date.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
             println!("{} {} {text}", gray(&date_str), blue("|"));
         }
     }
     Ok(())
 }
 
-fn get_duration(q: &Query) -> anyhow::Result<(NaiveDateTime, NaiveDateTime)> {
-    if let Some(since) = q.since {
-        if q.start.is_some() || q.end.is_some() || q.duration.is_some() {
+fn get_duration_helper(
+    start: Option<NaiveDateTime>,
+    end: Option<NaiveDateTime>,
+    duration: Option<Duration>,
+    since: Option<Duration>,
+) -> anyhow::Result<(NaiveDateTime, NaiveDateTime)> {
+    if let Some(since) = since {
+        if start.is_some() || end.is_some() || duration.is_some() {
             return Err(anyhow::format_err!("'since' prohibit start/end/duration"));
         }
         let since = chrono::Duration::from_std(since)?;
@@ -153,36 +166,171 @@ fn get_duration(q: &Query) -> anyhow::Result<(NaiveDateTime, NaiveDateTime)> {
         let now = Local::now().naive_utc();
         let start = now
             .checked_sub_signed(since)
-            .ok_or(anyhow::format_err!("failed to compute 'from' time"))?;
+            .ok_or_else(|| anyhow::format_err!("failed to compute 'from' time"))?;
         return Ok((start, now));
     }
-    if let Some(duration) = q.duration {
-        if q.start.is_some() && q.end.is_some() {
+    if let Some(duration) = duration {
+        if start.is_some() && end.is_some() {
             return Err(anyhow::format_err!(
                 "'duration' expects 'start' or 'end', not both"
             ));
         }
-        if q.start.is_none() && q.end.is_none() {
+        if start.is_none() && end.is_none() {
             return Err(anyhow::format_err!(
                 "'duration' expects 'start' or 'end', neither given"
             ));
         }
         let duration = chrono::Duration::from_std(duration)?;
-        if let Some(start) = q.start {
+        if let Some(start) = start {
             let end = start
                 .checked_add_signed(duration)
-                .ok_or(anyhow::format_err!("failed to compute 'end' time"))?;
+                .ok_or_else(|| anyhow::format_err!("failed to compute 'end' time"))?;
             return Ok((start, end));
         }
-        if let Some(end) = q.end {
+        if let Some(end) = end {
             let start = end
                 .checked_sub_signed(duration)
-                .ok_or(anyhow::format_err!("failed to compute 'start' time"))?;
+                .ok_or_else(|| anyhow::format_err!("failed to compute 'start' time"))?;
             return Ok((start, end));
         }
     }
-    if q.start.is_none() || q.end.is_none() {
+    if start.is_none() || end.is_none() {
         return Err(anyhow::format_err!("'start' and 'end' expected"));
     }
-    Ok((q.start.unwrap(), q.end.unwrap()))
+    Ok((start.unwrap(), end.unwrap()))
+}
+
+fn get_duration(q: &Query) -> anyhow::Result<(NaiveDateTime, NaiveDateTime)> {
+    get_duration_helper(q.start, q.end, q.duration, q.since)
+}
+
+#[derive(Parser, Debug)]
+/// loki misc apis
+pub struct QueryMisc {
+    /// Headers to send, used for basic authentication, etc
+    #[clap(long, num_args = 0..)]
+    headers: Vec<KeyValue>,
+
+    /// Send basic auth authentication
+    #[clap(short, long, env = "LF_BASIC_AUTH")]
+    basic_auth: Option<KeyValue>,
+
+    /// Tenant id
+    #[clap(short, long, env = "LF_TENANT")]
+    tenant: Option<String>,
+
+    /// Loki endpoint
+    #[clap(
+        short,
+        long,
+        default_value = "http://127.0.0.1:3100",
+        env = "LF_ENDPOINT"
+    )]
+    endpoint: String,
+
+    #[clap(subcommand)]
+    cmd: SubCommand,
+}
+
+#[derive(Parser, Debug)]
+enum SubCommand {
+    /// query labels set
+    #[clap(aliases=&["l", "la"])]
+    Labels(LabelsCommand),
+
+    /// query label values
+    #[clap(aliases=&["lv"])]
+    LabelValues(LabelValuesCommand),
+}
+
+#[derive(Parser, Debug)]
+struct LabelsCommand {
+    /// The start time for the query. Defaults to six hour ago.
+    #[clap(long)]
+    start: Option<NaiveDateTime>,
+
+    /// The end time for the query. Defaults to now.
+    #[clap(long)]
+    end: Option<NaiveDateTime>,
+
+    /// Shorthand to specify recent duration as start/end.
+    /// This has the highest priority since this is the most
+    /// common use case.
+    #[clap(long, value_parser=parse_duration)]
+    since: Option<Duration>,
+
+    /// Shorthand to specify duration (working with start or end).
+    /// The interval is [start, start + duration] or [end - duration, end]
+    /// depending on whether start or end you have been specified.
+    #[clap(short, long, value_parser=parse_duration)]
+    duration: Option<Duration>,
+}
+
+#[derive(Parser, Debug)]
+struct LabelValuesCommand {
+    /// The start time for the query. Defaults to six hour ago.
+    #[clap(long)]
+    start: Option<NaiveDateTime>,
+
+    /// The end time for the query. Defaults to now.
+    #[clap(long)]
+    end: Option<NaiveDateTime>,
+
+    /// Shorthand to specify recent duration as start/end.
+    /// This has the highest priority since this is the most
+    /// common use case.
+    #[clap(long, value_parser=parse_duration)]
+    since: Option<Duration>,
+
+    /// Shorthand to specify duration (working with start or end).
+    /// The interval is [start, start + duration] or [end - duration, end]
+    /// depending on whether start or end you have been specified.
+    #[clap(short, long, value_parser=parse_duration)]
+    duration: Option<Duration>,
+
+    /// label name
+    label: String,
+}
+
+#[derive(Debug, Serialize)]
+struct LabelsReq {
+    start: Option<i64>,
+    end: Option<i64>,
+}
+
+pub(crate) fn query_misc(q: QueryMisc) -> anyhow::Result<()> {
+    let req = match q.cmd {
+        SubCommand::Labels(l) => {
+            let client = reqwest::blocking::Client::new();
+            let req = client.get(format!("{}/loki/api/v1/labels", q.endpoint));
+            let req = refine_loki_request(req, q.headers, q.basic_auth, q.tenant);
+            let (start, end) = match get_duration_helper(l.start, l.end, l.duration, l.since) {
+                Ok(r) => (Some(r.0.timestamp_nanos()), Some(r.1.timestamp_nanos())),
+                Err(_) => (None, None),
+            };
+            debug!("start: {start:?}, end: {end:?}");
+            req.query(&LabelsReq{
+                start,
+                end,
+            })
+        }
+        SubCommand::LabelValues(lv) => {
+            let client = reqwest::blocking::Client::new();
+            let req = client.get(format!("{}/loki/api/v1/label/{}/values", q.endpoint, lv.label));
+            let req = refine_loki_request(req, q.headers, q.basic_auth, q.tenant);
+            let (start, end) = match get_duration_helper(lv.start, lv.end, lv.duration, lv.since) {
+                Ok(r) => (Some(r.0.timestamp_nanos()), Some(r.1.timestamp_nanos())),
+                Err(_) => (None, None),
+            };
+            debug!("start: {start:?}, end: {end:?}");
+            req.query(&LabelsReq{
+                start,
+                end,
+            })
+        },
+    };
+    let resp = req.send()?;
+    let obj: serde_json::Value = serde_json::from_str(&resp.text()?)?;
+    println!("{}", serde_json::to_string_pretty(&obj)?);
+    Ok(())
 }

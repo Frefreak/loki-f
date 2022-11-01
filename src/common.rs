@@ -75,5 +75,5 @@ fn true_color(s: &str, r: u8, g: u8, b: u8) -> String {
         // should have detect 256 color supports properly
         return format!("\x1b[38;2;{};{};{};1m{}\x1b[0m", r, g, b, s);
     }
-    return s.to_string();
+    s.to_string()
 }
