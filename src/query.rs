@@ -4,20 +4,18 @@ use std::{str::FromStr, time::Duration};
 use tracing::debug;
 
 use chrono::{Local, NaiveDateTime};
-use clap::Parser;
+use clap::{Parser, ValueEnum, Args};
 
 use crate::common::{blue, gray, green, refine_loki_request, KeyValue};
 
 #[derive(Parser, Debug)]
 /// loki query range api
 pub struct Query {
-    /// Headers to send, used for basic authentication, etc
-    #[clap(long, num_args = 0..)]
-    headers: Vec<KeyValue>,
+    #[command(flatten)]
+    http: HttpOpts,
 
-    /// Send basic auth authentication
-    #[clap(short, long, env = "LF_BASIC_AUTH")]
-    basic_auth: Option<KeyValue>,
+    #[command(flatten)]
+    time_range: TimeRangeOpts,
 
     /// The LogQL query to perform
     #[clap(short, long)]
@@ -32,45 +30,12 @@ pub struct Query {
     #[clap(short, long)]
     raw: bool,
 
-    /// The start time for the query. Defaults to one hour ago.
-    #[clap(long)]
-    start: Option<NaiveDateTime>,
-
-    /// The end time for the query. Defaults to now.
-    #[clap(long)]
-    end: Option<NaiveDateTime>,
-
     /// Determines the sort order of logs. Supported values are forward or backward
-    #[clap(long, default_value = "backward")]
+    #[clap(long, default_value = "backward", value_enum)]
     direction: QueryDirection,
-
-    /// Shorthand to specify recent duration as start/end.
-    /// This has the highest priority since this is the most
-    /// common use case.
-    #[clap(long, value_parser=parse_duration)]
-    since: Option<Duration>,
-
-    /// Shorthand to specify duration (working with start or end).
-    /// The interval is [start, start + duration] or [end - duration, end]
-    /// depending on whether start or end you have been specified.
-    #[clap(short, long, value_parser=parse_duration)]
-    duration: Option<Duration>,
-
-    /// Tenant id
-    #[clap(short, long, env = "LF_TENANT")]
-    tenant: Option<String>,
-
-    /// Loki endpoint
-    #[clap(
-        short,
-        long,
-        default_value = "http://127.0.0.1:3100",
-        env = "LF_ENDPOINT"
-    )]
-    endpoint: String,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, ValueEnum)]
 enum QueryDirection {
     #[serde(rename = "forward")]
     Forward,
@@ -102,10 +67,10 @@ struct QueryRangeRequest {
 
 pub fn query(q: Query) -> anyhow::Result<()> {
     debug!("{q:?}");
-    let (from, through) = get_duration(&q)?;
+    let (from, through) = get_duration(&q.time_range)?;
     let client = reqwest::blocking::Client::new();
-    let req = client.get(format!("{}/loki/api/v1/query_range", q.endpoint));
-    let req = refine_loki_request(req, q.headers, q.basic_auth, q.tenant);
+    let req = client.get(format!("{}/loki/api/v1/query_range", q.http.endpoint));
+    let req = refine_loki_request(req, q.http.headers, q.http.basic_auth, q.http.tenant);
     let query = QueryRangeRequest {
         start: from.timestamp_nanos(),
         end: through.timestamp_nanos(),
@@ -149,6 +114,53 @@ pub fn query(q: Query) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Args)]
+pub struct HttpOpts {
+    /// Headers to send, used for basic authentication, etc
+    #[clap(long, num_args = 0..)]
+    pub headers: Vec<KeyValue>,
+
+    /// Send basic auth authentication
+    #[clap(short, long, env = "LF_BASIC_AUTH")]
+    pub basic_auth: Option<KeyValue>,
+
+    /// Tenant id
+    #[clap(short, long, env = "LF_TENANT")]
+    pub tenant: Option<String>,
+
+    /// Loki endpoint
+    #[clap(
+        short,
+        long,
+        default_value = "http://127.0.0.1:3100",
+        env = "LF_ENDPOINT"
+    )]
+    pub endpoint: String,
+}
+
+#[derive(Debug, Args)]
+pub struct TimeRangeOpts {
+    /// The start time for the query. Defaults to one hour ago.
+    #[clap(long)]
+    pub start: Option<NaiveDateTime>,
+
+    /// The end time for the query. Defaults to now.
+    #[clap(long)]
+    pub end: Option<NaiveDateTime>,
+
+    /// Shorthand to specify recent duration as start/end.
+    /// This has the highest priority since this is the most
+    /// common use case.
+    #[clap(long, value_parser=parse_duration)]
+    pub since: Option<Duration>,
+
+    /// Shorthand to specify duration (working with start or end).
+    /// The interval is [start, start + duration] or [end - duration, end]
+    /// depending on whether start or end you have been specified.
+    #[clap(short, long, value_parser=parse_duration)]
+    pub duration: Option<Duration>,
 }
 
 fn get_duration_helper(
@@ -200,33 +212,15 @@ fn get_duration_helper(
     Ok((start.unwrap(), end.unwrap()))
 }
 
-fn get_duration(q: &Query) -> anyhow::Result<(NaiveDateTime, NaiveDateTime)> {
+fn get_duration(q: &TimeRangeOpts) -> anyhow::Result<(NaiveDateTime, NaiveDateTime)> {
     get_duration_helper(q.start, q.end, q.duration, q.since)
 }
 
 #[derive(Parser, Debug)]
 /// loki misc apis
 pub struct QueryMisc {
-    /// Headers to send, used for basic authentication, etc
-    #[clap(long, num_args = 0..)]
-    headers: Vec<KeyValue>,
-
-    /// Send basic auth authentication
-    #[clap(short, long, env = "LF_BASIC_AUTH")]
-    basic_auth: Option<KeyValue>,
-
-    /// Tenant id
-    #[clap(short, long, env = "LF_TENANT")]
-    tenant: Option<String>,
-
-    /// Loki endpoint
-    #[clap(
-        short,
-        long,
-        default_value = "http://127.0.0.1:3100",
-        env = "LF_ENDPOINT"
-    )]
-    endpoint: String,
+    #[command(flatten)]
+    http: HttpOpts,
 
     #[clap(subcommand)]
     cmd: SubCommand,
@@ -245,48 +239,14 @@ enum SubCommand {
 
 #[derive(Parser, Debug)]
 struct LabelsCommand {
-    /// The start time for the query. Defaults to six hour ago.
-    #[clap(long)]
-    start: Option<NaiveDateTime>,
-
-    /// The end time for the query. Defaults to now.
-    #[clap(long)]
-    end: Option<NaiveDateTime>,
-
-    /// Shorthand to specify recent duration as start/end.
-    /// This has the highest priority since this is the most
-    /// common use case.
-    #[clap(long, value_parser=parse_duration)]
-    since: Option<Duration>,
-
-    /// Shorthand to specify duration (working with start or end).
-    /// The interval is [start, start + duration] or [end - duration, end]
-    /// depending on whether start or end you have been specified.
-    #[clap(short, long, value_parser=parse_duration)]
-    duration: Option<Duration>,
+    #[command(flatten)]
+    time_range: TimeRangeOpts,
 }
 
 #[derive(Parser, Debug)]
 struct LabelValuesCommand {
-    /// The start time for the query. Defaults to six hour ago.
-    #[clap(long)]
-    start: Option<NaiveDateTime>,
-
-    /// The end time for the query. Defaults to now.
-    #[clap(long)]
-    end: Option<NaiveDateTime>,
-
-    /// Shorthand to specify recent duration as start/end.
-    /// This has the highest priority since this is the most
-    /// common use case.
-    #[clap(long, value_parser=parse_duration)]
-    since: Option<Duration>,
-
-    /// Shorthand to specify duration (working with start or end).
-    /// The interval is [start, start + duration] or [end - duration, end]
-    /// depending on whether start or end you have been specified.
-    #[clap(short, long, value_parser=parse_duration)]
-    duration: Option<Duration>,
+    #[command(flatten)]
+    time_range: TimeRangeOpts,
 
     /// label name
     label: String,
@@ -302,11 +262,17 @@ pub(crate) fn query_misc(q: QueryMisc) -> anyhow::Result<()> {
     let req = match q.cmd {
         SubCommand::Labels(l) => {
             let client = reqwest::blocking::Client::new();
-            let req = client.get(format!("{}/loki/api/v1/labels", q.endpoint));
-            let req = refine_loki_request(req, q.headers, q.basic_auth, q.tenant);
-            let (start, end) = match get_duration_helper(l.start, l.end, l.duration, l.since) {
-                Ok(r) => (Some(r.0.timestamp_nanos()), Some(r.1.timestamp_nanos())),
-                Err(_) => (None, None),
+            let req = client.get(format!("{}/loki/api/v1/labels", q.http.endpoint));
+            let req = refine_loki_request(req, q.http.headers, q.http.basic_auth, q.http.tenant);
+            let (start, end) = match get_duration(&l.time_range) {
+                Ok(r) => {
+                    debug!("start: {}, end: {}", r.0, r.1);
+                    (Some(r.0.timestamp_nanos()), Some(r.1.timestamp_nanos()))
+                },
+                Err(err) => {
+                    debug!("{}", err);
+                    (None, None)
+                }
             };
             debug!("start: {start:?}, end: {end:?}");
             req.query(&LabelsReq{
@@ -316,11 +282,17 @@ pub(crate) fn query_misc(q: QueryMisc) -> anyhow::Result<()> {
         }
         SubCommand::LabelValues(lv) => {
             let client = reqwest::blocking::Client::new();
-            let req = client.get(format!("{}/loki/api/v1/label/{}/values", q.endpoint, lv.label));
-            let req = refine_loki_request(req, q.headers, q.basic_auth, q.tenant);
-            let (start, end) = match get_duration_helper(lv.start, lv.end, lv.duration, lv.since) {
-                Ok(r) => (Some(r.0.timestamp_nanos()), Some(r.1.timestamp_nanos())),
-                Err(_) => (None, None),
+            let req = client.get(format!("{}/loki/api/v1/label/{}/values", q.http.endpoint, lv.label));
+            let req = refine_loki_request(req, q.http.headers, q.http.basic_auth, q.http.tenant);
+            let (start, end) = match get_duration(&lv.time_range) {
+                Ok(r) => {
+                    debug!("start: {}, end: {}", r.0, r.1);
+                    (Some(r.0.timestamp_nanos()), Some(r.1.timestamp_nanos()))
+                }
+                Err(err) => {
+                    debug!("{}", err);
+                    (None, None)
+                }
             };
             debug!("start: {start:?}, end: {end:?}");
             req.query(&LabelsReq{
