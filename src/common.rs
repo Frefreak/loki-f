@@ -1,3 +1,4 @@
+use clap::Args;
 use reqwest::blocking::RequestBuilder;
 use std::str::FromStr;
 
@@ -76,4 +77,28 @@ fn true_color(s: &str, r: u8, g: u8, b: u8) -> String {
         return format!("\x1b[38;2;{};{};{};1m{}\x1b[0m", r, g, b, s);
     }
     s.to_string()
+}
+
+#[derive(Debug, Args)]
+pub struct HttpOpts {
+    /// Headers to send, used for basic authentication, etc
+    #[clap(long, num_args = 0..)]
+    pub headers: Vec<KeyValue>,
+
+    /// Send basic auth authentication
+    #[clap(short, long, env = "LF_BASIC_AUTH")]
+    pub basic_auth: Option<KeyValue>,
+
+    /// Tenant id
+    #[clap(short, long, env = "LF_TENANT")]
+    pub tenant: Option<String>,
+
+    /// Loki endpoint
+    #[clap(
+        short,
+        long,
+        default_value = "http://127.0.0.1:3100",
+        env = "LF_ENDPOINT"
+    )]
+    pub endpoint: String,
 }

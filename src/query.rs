@@ -6,7 +6,7 @@ use tracing::debug;
 use chrono::{Local, NaiveDateTime};
 use clap::{Parser, ValueEnum, Args};
 
-use crate::common::{blue, gray, green, refine_loki_request, KeyValue};
+use crate::common::{blue, gray, green, refine_loki_request, HttpOpts};
 
 #[derive(Parser, Debug)]
 /// loki query range api
@@ -117,50 +117,26 @@ pub fn query(q: Query) -> anyhow::Result<()> {
 }
 
 #[derive(Debug, Args)]
-pub struct HttpOpts {
-    /// Headers to send, used for basic authentication, etc
-    #[clap(long, num_args = 0..)]
-    pub headers: Vec<KeyValue>,
-
-    /// Send basic auth authentication
-    #[clap(short, long, env = "LF_BASIC_AUTH")]
-    pub basic_auth: Option<KeyValue>,
-
-    /// Tenant id
-    #[clap(short, long, env = "LF_TENANT")]
-    pub tenant: Option<String>,
-
-    /// Loki endpoint
-    #[clap(
-        short,
-        long,
-        default_value = "http://127.0.0.1:3100",
-        env = "LF_ENDPOINT"
-    )]
-    pub endpoint: String,
-}
-
-#[derive(Debug, Args)]
-pub struct TimeRangeOpts {
+struct TimeRangeOpts {
     /// The start time for the query. Defaults to one hour ago.
     #[clap(long)]
-    pub start: Option<NaiveDateTime>,
+    start: Option<NaiveDateTime>,
 
     /// The end time for the query. Defaults to now.
     #[clap(long)]
-    pub end: Option<NaiveDateTime>,
+    end: Option<NaiveDateTime>,
 
     /// Shorthand to specify recent duration as start/end.
     /// This has the highest priority since this is the most
     /// common use case.
     #[clap(long, value_parser=parse_duration)]
-    pub since: Option<Duration>,
+    since: Option<Duration>,
 
     /// Shorthand to specify duration (working with start or end).
     /// The interval is [start, start + duration] or [end - duration, end]
     /// depending on whether start or end you have been specified.
     #[clap(short, long, value_parser=parse_duration)]
-    pub duration: Option<Duration>,
+    duration: Option<Duration>,
 }
 
 fn get_duration_helper(
