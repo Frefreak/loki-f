@@ -1,6 +1,8 @@
+use chrono::NaiveDateTime;
 use clap::Args;
 use reqwest::blocking::RequestBuilder;
-use std::str::FromStr;
+use std::{str::FromStr, time::Duration};
+use parse_duration::parse as parse_duration;
 
 #[derive(Debug, Clone)]
 pub struct KeyValue {
@@ -56,14 +58,16 @@ pub(crate) fn red(s: &str) -> String {
     true_color(s, 255, 0, 0)
 }
 
-#[allow(dead_code)]
 pub(crate) fn green(s: &str) -> String {
     true_color(s, 0, 255, 0)
 }
 
-#[allow(dead_code)]
 pub(crate) fn blue(s: &str) -> String {
-    true_color(s, 0, 0, 255)
+    true_color(s, 100, 100, 255)
+}
+
+pub(crate) fn yellow(s: &str) -> String {
+    true_color(s, 255, 255, 0)
 }
 
 #[allow(dead_code)]
@@ -101,4 +105,27 @@ pub struct HttpOpts {
         env = "LF_ENDPOINT"
     )]
     pub endpoint: String,
+}
+
+#[derive(Debug, Args)]
+pub struct TimeRangeOpts {
+    /// The start time for the query. Defaults to one hour ago.
+    #[clap(long)]
+    pub start: Option<NaiveDateTime>,
+
+    /// The end time for the query. Defaults to now.
+    #[clap(long)]
+    pub end: Option<NaiveDateTime>,
+
+    /// Shorthand to specify recent duration as start/end.
+    /// This has the highest priority since this is the most
+    /// common use case.
+    #[clap(long, value_parser=parse_duration)]
+    pub since: Option<Duration>,
+
+    /// Shorthand to specify duration (working with start or end).
+    /// The interval is [start, start + duration] or [end - duration, end]
+    /// depending on whether start or end you have been specified.
+    #[clap(short, long, value_parser=parse_duration)]
+    pub duration: Option<Duration>,
 }

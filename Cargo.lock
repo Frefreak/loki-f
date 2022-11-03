@@ -536,6 +536,7 @@ dependencies = [
  "nut",
  "parse_duration",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "snap",

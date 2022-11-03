@@ -1,12 +1,11 @@
-use parse_duration::parse as parse_duration;
 use serde::Serialize;
 use std::{str::FromStr, time::Duration};
 use tracing::debug;
 
 use chrono::{Local, NaiveDateTime};
-use clap::{Parser, ValueEnum, Args};
+use clap::{Parser, ValueEnum};
 
-use crate::common::{blue, gray, green, refine_loki_request, HttpOpts};
+use crate::common::{blue, gray, green, refine_loki_request, HttpOpts, TimeRangeOpts};
 
 #[derive(Parser, Debug)]
 /// loki query range api
@@ -18,7 +17,7 @@ pub struct Query {
     time_range: TimeRangeOpts,
 
     /// The LogQL query to perform
-    #[clap(short, long)]
+    #[clap(short, long, default_value="{prog=\"lf\"}")]
     query: String,
 
     /// The max number of entries to return. Only applies
@@ -116,29 +115,6 @@ pub fn query(q: Query) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Args)]
-struct TimeRangeOpts {
-    /// The start time for the query. Defaults to one hour ago.
-    #[clap(long)]
-    start: Option<NaiveDateTime>,
-
-    /// The end time for the query. Defaults to now.
-    #[clap(long)]
-    end: Option<NaiveDateTime>,
-
-    /// Shorthand to specify recent duration as start/end.
-    /// This has the highest priority since this is the most
-    /// common use case.
-    #[clap(long, value_parser=parse_duration)]
-    since: Option<Duration>,
-
-    /// Shorthand to specify duration (working with start or end).
-    /// The interval is [start, start + duration] or [end - duration, end]
-    /// depending on whether start or end you have been specified.
-    #[clap(short, long, value_parser=parse_duration)]
-    duration: Option<Duration>,
-}
-
 fn get_duration_helper(
     start: Option<NaiveDateTime>,
     end: Option<NaiveDateTime>,
@@ -188,7 +164,7 @@ fn get_duration_helper(
     Ok((start.unwrap(), end.unwrap()))
 }
 
-fn get_duration(q: &TimeRangeOpts) -> anyhow::Result<(NaiveDateTime, NaiveDateTime)> {
+pub fn get_duration(q: &TimeRangeOpts) -> anyhow::Result<(NaiveDateTime, NaiveDateTime)> {
     get_duration_helper(q.start, q.end, q.duration, q.since)
 }
 
@@ -278,6 +254,7 @@ pub(crate) fn query_misc(q: QueryMisc) -> anyhow::Result<()> {
         },
     };
     let resp = req.send()?;
+    println!("{}", resp.status());
     let obj: serde_json::Value = serde_json::from_str(&resp.text()?)?;
     println!("{}", serde_json::to_string_pretty(&obj)?);
     Ok(())
