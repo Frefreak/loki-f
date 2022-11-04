@@ -5,10 +5,10 @@ use std::{
 };
 
 use anyhow::Result;
-use base64::encode;
+use base64::{encode_config, STANDARD_NO_PAD};
 use chrono::Local;
 use clap::Parser;
-use nut::{DBBuilder, DB};
+use nut::DBBuilder;
 use ring::digest::{digest, SHA256};
 
 use crate::{
@@ -32,6 +32,14 @@ pub struct Bolt {
     /// tenant name
     #[arg(short, long, default_value = "fake")]
     tenant: String,
+
+    /// row shard
+    #[arg(short, long, default_value = "16")]
+    shard: u32,
+
+    /// disable broad queries
+    #[arg(long)]
+    disable_broad_queries: bool,
 }
 
 pub fn inspect(b: Bolt) -> Result<()> {
@@ -40,8 +48,6 @@ pub fn inspect(b: Bolt) -> Result<()> {
     println!(
         "  2. we only consider MatchEqual exprs, so query only accepts something like a=1 b=2"
     );
-    println!("  3. assuming shard number is 16, which is the default");
-    println!("  4. assuming BroadQueries is enabled (TODO?)");
     println!("{}", yellow("we now begin\n"));
 
     let buckets = get_buckets(&b);
@@ -51,11 +57,10 @@ pub fn inspect(b: Bolt) -> Result<()> {
     let bucket = tx.bucket(b"index")?;
     for kv in b.query.iter() {
         println!("{:?}", kv);
-        let queries = calc_queries(&buckets, kv);
+        let queries = calc_queries(b.shard, &buckets, kv);
 
         println!("\n{}", gray("getting entries (query pages)..."));
-        let entries = get_entries_from_queries(&bucket, &queries)?;
-        let entries = filter_entries(&entries, kv);
+        let entries = get_entries_from_queries(b.disable_broad_queries, &bucket, queries)?;
 
         println!("len: {}", entries.len());
         for entry in entries.iter() {
@@ -91,7 +96,7 @@ pub fn inspect(b: Bolt) -> Result<()> {
     println!("{}", queries.len());
     println!("{:?}", queries);
 
-    let entries = get_entries_from_queries(&bucket, &queries)?;
+    let entries = get_entries_from_queries(b.disable_broad_queries, &bucket, queries)?;
     print!("{}: ", gray("entries by series id"));
     println!("{}\n{:?}", entries.len(), entries);
 
@@ -101,13 +106,29 @@ pub fn inspect(b: Bolt) -> Result<()> {
         .iter()
         .map(|e| parse_chunk_time_range_value(&e.range_value))
         .collect::<anyhow::Result<_>>()?;
-    println!("final result: {:?}", result);
+    println!("final result:\n{:?}", result);
+    println!("len: {}", result.len());
     Ok(())
 }
 
 // only do match_equal
-fn filter_entries(entries: &Vec<Entry>, kv: &KeyValue) -> Vec<Entry> {
-    entries.into_iter().filter(|x| x.value == kv.value).cloned().collect()
+fn filter_entries(entries: &Vec<Entry>, query: &Query) -> Vec<Entry> {
+    entries.into_iter().filter(|x| {
+        if query.range_value_prefix.len() > 0 && !x.range_value.starts_with(&query.range_value_prefix) {
+            return false;
+        }
+        // I compared with loki's implementation, this can only filter out "some" chunk
+        // if the time starts with 00000000 this won't be able to filter out any chunk
+        // we need additional filter for time range
+        // TODO: pkg/storage/chunk/chunk.go
+        if query.range_value_start.len() > 0 && query.range_value_start > x.range_value {
+            return false;
+        }
+        if query.value_equal.len() > 0 && query.value_equal != x.value {
+            return false;
+        }
+        return true;
+    }).cloned().collect()
 }
 
 #[derive(Debug)]
@@ -120,13 +141,13 @@ struct Bucket {
     bucket_size: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 struct Query {
     table_name: String,
     hash_value: String,
-    range_value_prefix: Vec<u8>,
-    range_value_start: Vec<u8>,
+    range_value_prefix: String,
+    range_value_start: String,
     value_equal: String,
 }
 
@@ -179,7 +200,7 @@ fn get_buckets(b: &Bolt) -> Vec<Bucket> {
     buckets
 }
 
-fn calc_queries(buckets: &Vec<Bucket>, kv: &KeyValue) -> Vec<Query> {
+fn calc_queries(shard: u32, buckets: &Vec<Bucket>, kv: &KeyValue) -> Vec<Query> {
     let mut queries = vec![];
     for bucket in buckets.iter() {
         println!(
@@ -188,14 +209,14 @@ fn calc_queries(buckets: &Vec<Bucket>, kv: &KeyValue) -> Vec<Query> {
             yellow(&format!("{:?}", bucket))
         );
         let hash_val = digest(&SHA256, kv.value.as_ref());
-        let mut hash_val_encoded = encode(hash_val);
+        let mut hash_val_encoded = encode_config(hash_val, STANDARD_NO_PAD);
         hash_val_encoded.push_str("\x00");
-        for i in 0..16 {
+        for i in 0..shard {
             queries.push(Query {
                 table_name: bucket.table_name.clone(),
                 hash_value: format!("{:02}:{}:logs:{}", i, bucket.hash_key, kv.key),
-                range_value_prefix: hash_val_encoded.clone().into_bytes(),
-                range_value_start: vec![],
+                range_value_prefix: hash_val_encoded.clone(),
+                range_value_start: String::default(),
                 value_equal: kv.value.clone(),
             });
         }
@@ -236,25 +257,65 @@ fn parse_chunk_time_range_value(range_value: &String) -> anyhow::Result<String> 
     }
 }
 
+fn do_broad_queries(bucket: &nut::Bucket, queries: Vec<Query>) -> anyhow::Result<Vec<Entry>> {
+    let queries = queries.into_iter().map(|q| Query {
+        table_name: q.table_name,
+        hash_value: q.hash_value,
+        range_value_prefix: String::default(),
+        range_value_start: q.range_value_start,
+        value_equal: q.value_equal,
+    }).collect();
+    query_pages(bucket, queries)
+}
+
 // Returns entries from queries.
 // Orig implementation is roughly at:
 // - pkg/storage/chunk/client/local/boltdb_index_client.go nextItem
 // - pkg/storage/stores/series/index/caching_index_client.go doBroadQueries/doQueries?
 // Only the simple case MatchEqual is implemented
 fn get_entries_from_queries(
+    disable_broad_queries: bool,
     bucket: &nut::Bucket,
-    queries: &Vec<Query>,
+    queries: Vec<Query>,
+) -> anyhow::Result<Vec<Entry>> {
+    if !disable_broad_queries {
+        do_broad_queries(bucket, queries)
+    } else {
+        query_pages(bucket, queries)
+    }
+}
+
+fn query_pages(
+    bucket: &nut::Bucket,
+    queries: Vec<Query>,
 ) -> anyhow::Result<Vec<Entry>> {
     let mut entries = vec![];
     for query in queries {
-        let start = query.hash_value.clone() + "\x00";
+        let prefix_len = query.hash_value.len() + 1;
+        let start = if query.range_value_prefix.len() > 0 {
+            query.hash_value.clone() + "\x00" + &query.range_value_prefix
+        } else if query.range_value_start.len() > 0 {
+            // query.hash_value + "\x00" + &query.range_value_start
+            // original code appends range_value_start here
+            // but doesn't actually use it in iterator to filter
+            query.hash_value.clone() + "\x00"
+        } else {
+            query.hash_value.clone() + "\x00"
+        };
+        let mut sub_entries = vec![];
         bucket.for_each(Box::new(|key, value| -> Result<(), String> {
             if key.starts_with(start.as_bytes()) {
-                let range_value = from_utf8(&key[start.len()..]).unwrap().to_string();
                 if value.is_none() {
                     return Ok(());
+                } else {
+                    if query.value_equal.len() > 0 {
+                        if value.unwrap() != query.value_equal.as_bytes() {
+                            return Ok(())
+                        }
+                    }
                 }
-                entries.push(Entry {
+                let range_value = from_utf8(&key[prefix_len..]).unwrap().to_string();
+                sub_entries.push(Entry {
                     table_name: query.table_name.clone(),
                     hash_value: start.clone(),
                     range_value,
@@ -262,7 +323,8 @@ fn get_entries_from_queries(
                 });
             }
             Ok(())
-        }))?
+        }))?;
+        entries.extend(filter_entries(&sub_entries, &query));
     }
     return Ok(entries);
 }
@@ -276,8 +338,8 @@ fn calc_queries_for_serires(buckets: &Vec<Bucket>, series_ids: Vec<String>) -> V
             Query {
                 table_name: bucket.table_name.clone(),
                 hash_value: format!("{}:{}", bucket.hash_key, id),
-                range_value_prefix: vec![],
-                range_value_start: (encode_from_bytes + "\x00").as_bytes().to_vec(),
+                range_value_prefix: String::default(),
+                range_value_start: encode_from_bytes,
                 value_equal: String::default(),
             }
         }))
