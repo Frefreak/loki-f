@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::Result;
 use base64::{encode_config, STANDARD_NO_PAD};
-use chrono::Local;
+use chrono::{Local, NaiveDateTime};
 use clap::Parser;
 use nut::DBBuilder;
 use ring::digest::{digest, SHA256};
@@ -50,7 +50,7 @@ pub fn inspect(b: Bolt) -> Result<()> {
     );
     println!("{}", yellow("we now begin\n"));
 
-    let buckets = get_buckets(&b);
+    let (buckets, (start, end)) = get_buckets(&b);
     let mut series_ids = HashSet::default();
     let db = DBBuilder::new(b.file.clone()).read_only(true).build()?;
     let tx = db.begin_tx()?;
@@ -106,8 +106,32 @@ pub fn inspect(b: Bolt) -> Result<()> {
         .iter()
         .map(|e| parse_chunk_time_range_value(&e.range_value))
         .collect::<anyhow::Result<_>>()?;
-    println!("final result:\n{:?}", result);
+    println!("got chunk-ids:\n{:?}", result);
     println!("len: {}", result.len());
+
+    let mut chunk_refs = vec![];
+    for r in result {
+        let mut rsp = r.split("/");
+        let tenant_id = rsp.next().unwrap();
+        let segs = rsp.next().unwrap();
+        let parts = segs.split(":").collect::<Vec<_>>();
+        let fingerprint = u64::from_str_radix(parts[0], 16)?;
+        let from = i64::from_str_radix(parts[1], 16)?;
+        let to = i64::from_str_radix(parts[2], 16)?;
+        let checksum = u32::from_str_radix(parts[3], 16)?;
+        if to < start.timestamp_millis() || from > end.timestamp_millis() {
+            continue;
+        }
+        chunk_refs.push(ChunkRef {
+            user_id: tenant_id.to_string(),
+            fingerprint,
+            from,
+            to,
+            checksum,
+        });
+    }
+    println!("final result:\n{:?}", chunk_refs);
+    println!("len: {}", chunk_refs.len());
     Ok(())
 }
 
@@ -160,7 +184,17 @@ struct Entry {
     value: String,
 }
 
-fn get_buckets(b: &Bolt) -> Vec<Bucket> {
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct ChunkRef {
+    user_id: String,
+    fingerprint: u64,
+    from: i64,
+    to: i64,
+    checksum: u32,
+}
+
+fn get_buckets(b: &Bolt) -> (Vec<Bucket>, (NaiveDateTime, NaiveDateTime)) {
     println!("{}", gray("calculating start/end..."));
     let (start, end) = match get_duration(&b.time_range) {
         Ok(k) => {
@@ -197,7 +231,7 @@ fn get_buckets(b: &Bolt) -> Vec<Bucket> {
         });
     }
     println!("{:#?}", buckets);
-    buckets
+    (buckets, (start, end))
 }
 
 fn calc_queries(shard: u32, buckets: &Vec<Bucket>, kv: &KeyValue) -> Vec<Query> {
