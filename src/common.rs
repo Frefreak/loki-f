@@ -2,7 +2,7 @@ use chrono::NaiveDateTime;
 use clap::Args;
 use reqwest::blocking::RequestBuilder;
 use std::{str::FromStr, time::Duration};
-use parse_duration::parse as parse_duration;
+use humantime::parse_duration;
 
 #[derive(Debug, Clone)]
 pub struct KeyValue {
