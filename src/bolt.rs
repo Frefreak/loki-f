@@ -96,7 +96,8 @@ pub fn inspect(b: Bolt) -> Result<()> {
     println!("{}", queries.len());
     println!("{:?}", queries);
 
-    let entries = get_entries_from_queries(b.disable_broad_queries, &bucket, queries)?;
+    // this time will definitely go to the broad query route
+    let entries = get_entries_from_queries(false, &bucket, queries)?;
     print!("{}: ", gray("entries by series id"));
     println!("{}\n{:?}", entries.len(), entries);
 
