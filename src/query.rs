@@ -1,3 +1,4 @@
+use reqwest::StatusCode;
 use serde::Serialize;
 use std::{str::FromStr, time::Duration};
 use tracing::debug;
@@ -80,6 +81,9 @@ pub fn query(q: Query) -> anyhow::Result<()> {
     debug!("{query:?}");
     let resp = req.query(&query).send()?;
     println!("{}", resp.status());
+    if resp.status() != StatusCode::OK {
+        return Err(anyhow::format_err!(resp.text()?));
+    }
     let obj: serde_json::Value = serde_json::from_str(&resp.text()?)?;
     if q.raw {
         println!("{}", serde_json::to_string_pretty(&obj)?);
@@ -87,29 +91,51 @@ pub fn query(q: Query) -> anyhow::Result<()> {
     let result = obj.get("data").unwrap().get("result").unwrap();
     for r in result.as_array().unwrap() {
         // labels
-        let stream = r.get("stream").unwrap();
-        let mut stream_label = String::default();
-        let mut first = true;
-        for (k, v) in stream.as_object().unwrap() {
-            if first {
-                stream_label.push_str(&format!("{} = {}", k, v.as_str().unwrap()));
-                first = false;
-            } else {
-                stream_label.push_str(&format!(", {} = {}", k, v.as_str().unwrap()));
+        if let Some(stream) = r.get("stream") {
+            let mut stream_label = String::default();
+            let mut first = true;
+            for (k, v) in stream.as_object().unwrap() {
+                if first {
+                    stream_label.push_str(&format!("{} = {}", k, v.as_str().unwrap()));
+                    first = false;
+                } else {
+                    stream_label.push_str(&format!(", {} = {}", k, v.as_str().unwrap()));
+                }
             }
-        }
-        println!("{}", green(&stream_label));
+            println!("{}", green(&stream_label));
 
-        // values
-        for value in r.get("values").unwrap().as_array().unwrap() {
-            let ts_nano = value[0].as_str().unwrap().parse::<u64>().unwrap();
-            let date = NaiveDateTime::from_timestamp(
-                (ts_nano / 1_000_000_000) as i64,
-                (ts_nano % 1_000_000_000) as u32,
-            );
-            let text = value[1].as_str().unwrap();
-            let date_str = date.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
-            println!("{} {} {text}", gray(&date_str), blue("|"));
+            // values
+            for value in r.get("values").unwrap().as_array().unwrap() {
+                let ts_nano = value[0].as_str().unwrap().parse::<u64>().unwrap();
+                let date = NaiveDateTime::from_timestamp_opt(
+                    (ts_nano / 1_000_000_000) as i64,
+                    (ts_nano % 1_000_000_000) as u32,
+                ).unwrap();
+                let text = value[1].as_str().unwrap();
+                let date_str = date.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+                println!("{} {} {text}", gray(&date_str), blue("|"));
+            }
+        } else if let Some(metric) = r.get("metric") {
+            let mut metric_label = String::default();
+            let mut first = true;
+            for (k, v) in metric.as_object().unwrap() {
+                if first {
+                    metric_label.push_str(&format!("{} = {}", k, v.as_str().unwrap()));
+                    first = false;
+                } else {
+                    metric_label.push_str(&format!(", {} = {}", k, v.as_str().unwrap()));
+                }
+            }
+            println!("{}", green(&metric_label));
+
+            // values
+            for value in r.get("values").unwrap().as_array().unwrap() {
+                let ts = value[0].as_i64().unwrap();
+                let date = NaiveDateTime::from_timestamp_opt(ts, 0).unwrap();
+                let text = value[1].as_str().unwrap();
+                let date_str = date.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+                println!("{} {} {text}", gray(&date_str), blue("|"));
+            }
         }
     }
     Ok(())

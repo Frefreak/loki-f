@@ -38,7 +38,7 @@ impl BinRead for UnorderedBlockEntry {
         let mut vec = vec![0; sz as usize];
         reader.read_exact(vec.as_mut())?;
         Ok(UnorderedBlockEntry {
-            time: NaiveDateTime::from_timestamp(ts / (1e9 as i64), 0),
+            time: NaiveDateTime::from_timestamp_opt(ts / (1e9 as i64), 0).unwrap(),
             line: String::from_utf8_lossy(&vec).to_string(),
         })
     }
@@ -90,8 +90,8 @@ impl BinRead for BlockMeta {
         let compressed_size = reader.read_varint()?;
         Ok(BlockMeta {
             num_entries,
-            mint: NaiveDateTime::from_timestamp(mint / (1e9 as i64), 0),
-            maxt: NaiveDateTime::from_timestamp(maxt / (1e9 as i64), 0),
+            mint: NaiveDateTime::from_timestamp_opt(mint / (1e9 as i64), 0).unwrap(),
+            maxt: NaiveDateTime::from_timestamp_opt(maxt / (1e9 as i64), 0).unwrap(),
             offset,
             uncompressed_size,
             compressed_size,
