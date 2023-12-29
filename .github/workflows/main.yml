@@ -28,9 +28,15 @@ jobs:
     - name: Install musl-tools
       run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-    - name: Build
+    - name: Rust add target
       run: |
         rustup target add ${{ matrix.targets }}
+
+    - name: Cache Dependencies
+      uses: Swatinem/rust-cache@d30f1144e884b1fe579845ed7a339c640dff522e
+
+    - name: build
+      run: |
         cargo build --release --target=${{ matrix.targets }}
         cp target/${{ matrix.targets }}/release/${{ env.BIN }} ${{ env.BIN }}-${{ matrix.targets }}
 
@@ -51,6 +57,9 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: 16
+
+      - run: echo "HEAD_SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
+      - run: 'echo "HEAD_SHA: $HEAD_SHA"'
 
       - uses: actions/download-artifact@v1
         with:
